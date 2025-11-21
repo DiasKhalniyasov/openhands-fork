@@ -25,12 +25,15 @@ class PRReviewer:
         self.issue_number = args.issue_number
 
         self.config = load_openhands_config()
+        llm_config = self.config.get_llm_config()
         if args.llm_model:
-            self.config.set_llm_model(args.llm_model)
+            llm_config.model = args.llm_model
         if args.llm_api_key:
-            self.config.set_llm_api_key(args.llm_api_key)
+            from pydantic import SecretStr
+            llm_config.api_key = SecretStr(args.llm_api_key)
         if args.llm_base_url:
-            self.config.set_llm_base_url(args.llm_base_url)
+            llm_config.base_url = args.llm_base_url
+        self.config.set_llm_config(llm_config)
 
         self.llm_registry = LLMRegistry(self.config)
 
