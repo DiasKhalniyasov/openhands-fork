@@ -33,8 +33,8 @@ class PRReviewer(IssueResolver):
 
         This method orchestrates the full PR review workflow:
         1. Extracts the PR information
-        2. Analyzes the PR content and changes
-        3. Generates a review summary
+        2. Fetches the PR diff/changes
+        3. Uses LLM to review the code
         4. Posts a comment with the review
         """
         logger.info(f'Starting PR review for #{self.issue_number}')
@@ -42,13 +42,177 @@ class PRReviewer(IssueResolver):
         # Extract PR information
         issue = self.extract_issue()
 
-        # Analyze the PR and generate review
-        review_summary = await self._analyze_pr(issue)
+        # Fetch PR diff
+        pr_diff = self._fetch_pr_diff()
+
+        # Generate review using LLM
+        review_summary = await self._generate_code_review(issue, pr_diff)
 
         # Post the review comment
         self._post_review_comment(review_summary)
 
         logger.info(f'Completed PR review for #{self.issue_number}')
+
+    def _fetch_pr_diff(self) -> str:
+        """Fetch the diff for the PR using GitHub API.
+
+        Returns:
+            The PR diff as a string
+        """
+        import requests
+
+        logger.info(f'Fetching diff for PR #{self.issue_number}')
+
+        # Get the PR diff using GitHub API
+        url = f'{self.issue_handler._strategy.get_base_url()}/repos/{self.owner}/{self.repo}/pulls/{self.issue_number}'
+        headers = self.issue_handler._strategy.get_headers()
+        headers['Accept'] = 'application/vnd.github.v3.diff'
+
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        diff = response.text
+        logger.info(f'Fetched diff: {len(diff)} characters')
+        return diff
+
+    async def _generate_code_review(self, issue: Issue, pr_diff: str) -> str:
+        """Generate a code review using LLM.
+
+        Args:
+            issue: The Issue object containing PR information
+            pr_diff: The PR diff string
+
+        Returns:
+            A formatted review with LLM-generated feedback
+        """
+        logger.info(f'Generating code review for PR #{issue.number}')
+
+        # Build the prompt for the LLM
+        prompt = self._build_review_prompt(issue, pr_diff)
+
+        # Use the LLM to generate review
+        llm_config = self.app_config.get_llm_config()
+        from openhands.llm.llm import LLM
+
+        llm = LLM(llm_config)
+
+        try:
+            response = llm.completion(
+                messages=[
+                    {
+                        'role': 'system',
+                        'content': 'You are an expert code reviewer. Provide constructive, specific feedback on code changes.',
+                    },
+                    {'role': 'user', 'content': prompt},
+                ]
+            )
+
+            review_content = response.choices[0].message.content
+        except Exception as e:
+            logger.error(f'Failed to generate LLM review: {e}')
+            review_content = '*Unable to generate automated review. Please review manually.*'
+
+        # Format the final review
+        return self._format_review_output(issue, review_content, pr_diff)
+
+    def _build_review_prompt(self, issue: Issue, pr_diff: str) -> str:
+        """Build the prompt for LLM code review.
+
+        Args:
+            issue: The Issue object
+            pr_diff: The PR diff
+
+        Returns:
+            The formatted prompt
+        """
+        # Truncate diff if too long (keep first 10000 chars)
+        max_diff_length = 10000
+        truncated_diff = pr_diff[:max_diff_length]
+        if len(pr_diff) > max_diff_length:
+            truncated_diff += '\n\n[... diff truncated for length ...]'
+
+        prompt = f"""Please review the following pull request:
+
+**Title:** {issue.title}
+**PR Number:** #{issue.number}
+**Repository:** {issue.owner}/{issue.repo}
+
+**Description:**
+{issue.body if issue.body else 'No description provided'}
+
+**Code Changes:**
+```diff
+{truncated_diff}
+```
+
+Please provide a thorough code review covering:
+1. **Code Quality**: Are there any code smells, anti-patterns, or best practice violations?
+2. **Bugs & Issues**: Are there any potential bugs, edge cases, or logical errors?
+3. **Security**: Are there any security vulnerabilities or concerns?
+4. **Performance**: Are there any performance issues or optimization opportunities?
+5. **Maintainability**: Is the code readable, well-structured, and maintainable?
+6. **Testing**: Are there adequate tests? What test cases might be missing?
+
+Format your response as a structured review with clear sections and actionable feedback.
+"""
+        return prompt
+
+    def _format_review_output(
+        self, issue: Issue, llm_review: str, pr_diff: str
+    ) -> str:
+        """Format the final review output.
+
+        Args:
+            issue: The Issue object
+            llm_review: The LLM-generated review content
+            pr_diff: The PR diff
+
+        Returns:
+            Formatted review string
+        """
+        output_parts = []
+
+        # Header
+        output_parts.append(f'## 🤖 AI Code Review: {issue.title}\n\n')
+        output_parts.append(f'**PR #{issue.number}** in `{issue.owner}/{issue.repo}`\n\n')
+
+        # Summary section
+        if issue.body and issue.body.strip():
+            output_parts.append('### 📋 PR Description\n')
+            body_text = issue.body.strip()
+            if len(body_text) > 500:
+                output_parts.append(f'{body_text[:500]}...\n\n')
+            else:
+                output_parts.append(f'{body_text}\n\n')
+
+        # Branch info
+        if issue.head_branch and issue.base_branch:
+            output_parts.append(
+                f'**Branches:** `{issue.base_branch}` ← `{issue.head_branch}`\n\n'
+            )
+
+        # Changes summary
+        diff_lines = pr_diff.split('\n')
+        additions = sum(1 for line in diff_lines if line.startswith('+') and not line.startswith('+++'))
+        deletions = sum(1 for line in diff_lines if line.startswith('-') and not line.startswith('---'))
+        files_changed = len([line for line in diff_lines if line.startswith('diff --git')])
+
+        output_parts.append(f'**Changes:** {files_changed} file(s) changed, ')
+        output_parts.append(f'+{additions} additions, -{deletions} deletions\n\n')
+        output_parts.append('---\n\n')
+
+        # LLM Review
+        output_parts.append('### 🔍 Review Feedback\n\n')
+        output_parts.append(llm_review)
+        output_parts.append('\n\n')
+
+        # Footer
+        output_parts.append('---\n')
+        output_parts.append(
+            '*🤖 Review generated by [ForteBank AI PR Reviewer] powered by AI*\n'
+        )
+
+        return ''.join(output_parts)
 
     async def _analyze_pr(self, issue: Issue) -> str:
         """Analyze the PR and generate a review.
