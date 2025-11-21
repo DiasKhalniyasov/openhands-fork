@@ -28,8 +28,6 @@ from openhands.core.config.model_routing_config import ModelRoutingConfig
 from openhands.core.config.openhands_config import OpenHandsConfig
 from openhands.core.config.sandbox_config import SandboxConfig
 from openhands.core.config.security_config import SecurityConfig
-from openhands.storage import get_file_store
-from openhands.storage.files import FileStore
 from openhands.utils.import_utils import get_impl
 
 JWT_SECRET = '.jwt_secret'
@@ -366,14 +364,7 @@ def load_from_toml(cfg: OpenHandsConfig, toml_file: str = 'config.toml') -> None
             logger.openhands_logger.warning(f'Unknown section [{key}] in {toml_file}')
 
 
-def get_or_create_jwt_secret(file_store: FileStore) -> str:
-    try:
-        jwt_secret = file_store.read(JWT_SECRET)
-        return jwt_secret
-    except FileNotFoundError:
-        new_secret = uuid4().hex
-        file_store.write(JWT_SECRET, new_secret)
-        return new_secret
+
 
 
 def finalize_config(cfg: OpenHandsConfig) -> None:
@@ -447,11 +438,7 @@ def finalize_config(cfg: OpenHandsConfig) -> None:
         pathlib.Path(cfg.cache_dir).mkdir(parents=True, exist_ok=True)
 
     if not cfg.jwt_secret:
-        cfg.jwt_secret = SecretStr(
-            get_or_create_jwt_secret(
-                get_file_store(cfg.file_store, cfg.file_store_path)
-            )
-        )
+        cfg.jwt_secret = SecretStr(uuid4().hex)
 
     # If CLIRuntime is selected, disable Jupyter for all agents
     # Assuming 'cli' is the identifier for CLIRuntime

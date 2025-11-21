@@ -17,9 +17,7 @@ from openhands.core.logger import openhands_logger as logger
 from openhands.events.action.action import Action
 from openhands.events.action.commands import CmdRunAction
 from openhands.events.stream import EventStream
-from openhands.integrations.bitbucket.bitbucket_service import BitBucketServiceImpl
 from openhands.integrations.github.github_service import GithubServiceImpl
-from openhands.integrations.gitlab.gitlab_service import GitLabServiceImpl
 from openhands.integrations.service_types import (
     AuthenticationError,
     Branch,
@@ -107,8 +105,6 @@ class ProviderHandler:
     # Class variable for provider domains
     PROVIDER_DOMAINS: dict[ProviderType, str] = {
         ProviderType.GITHUB: 'github.com',
-        ProviderType.GITLAB: 'gitlab.com',
-        ProviderType.BITBUCKET: 'bitbucket.org',
     }
 
     def __init__(
@@ -127,8 +123,6 @@ class ProviderHandler:
 
         self.service_class_map: dict[ProviderType, type[GitService]] = {
             ProviderType.GITHUB: GithubServiceImpl,
-            ProviderType.GITLAB: GitLabServiceImpl,
-            ProviderType.BITBUCKET: BitBucketServiceImpl,
         }
 
         self.external_auth_id = external_auth_id
@@ -205,14 +199,7 @@ class ProviderHandler:
 
         return []
 
-    async def get_bitbucket_workspaces(self) -> list[str]:
-        service = cast(InstallationsService, self.get_service(ProviderType.BITBUCKET))
-        try:
-            return await service.get_installations()
-        except Exception as e:
-            logger.warning(f'Failed to get bitbucket workspaces {e}')
 
-        return []
 
     async def get_repositories(
         self,
@@ -666,21 +653,8 @@ class ProviderHandler:
             git_token = self.provider_tokens[provider].token
             if git_token:
                 token_value = git_token.get_secret_value()
-                if provider == ProviderType.GITLAB:
-                    remote_url = (
-                        f'https://oauth2:{token_value}@{domain}/{repo_name}.git'
-                    )
-                elif provider == ProviderType.BITBUCKET:
-                    # For Bitbucket, handle username:app_password format
-                    if ':' in token_value:
-                        # App token format: username:app_password
-                        remote_url = f'https://{token_value}@{domain}/{repo_name}.git'
-                    else:
-                        # Access token format: use x-token-auth
-                        remote_url = f'https://x-token-auth:{token_value}@{domain}/{repo_name}.git'
-                else:
-                    # GitHub
-                    remote_url = f'https://{token_value}@{domain}/{repo_name}.git'
+                # GitHub
+                remote_url = f'https://{token_value}@{domain}/{repo_name}.git'
             else:
                 remote_url = f'https://{domain}/{repo_name}.git'
         else:

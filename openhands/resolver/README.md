@@ -64,6 +64,46 @@ Follow these steps to use this workflow in your own repository:
 
 Need help? Feel free to [open an issue](https://github.com/openhands/openhands/issues).
 
+## Auto-Review PRs with GitHub Actions
+
+This repository also includes a workflow for automatically reviewing pull requests using AI. The workflow triggers when a PR with `[ForteBank-AI-Review]` in the title is opened, synchronized, or reopened.
+
+### Setup
+
+1. Follow steps 1-5 from the "Using the GitHub Actions Workflow" section above to set up tokens and secrets
+
+2. Copy the workflow file to your repository's `.github/workflows/` directory
+
+3. Push the workflow file to your repository
+
+### Usage
+
+1. Create a new pull request with `[ForteBank-AI-Review]` in the title
+2. The workflow will automatically trigger and review your PR
+3. The AI agent will analyze the changes and provide feedback
+
+### Workflow Triggers
+
+The auto-review workflow triggers when:
+- A PR is opened with `[ForteBank-AI-Review]` in the title
+- A PR with `[ForteBank-AI-Review]` in the title is synchronized (new commits pushed)
+- A PR with `[ForteBank-AI-Review]` in the title is reopened
+
+Note: PRs created by `openhands-agent` are excluded to prevent recursive reviews.
+
+### Configuration Options
+
+The workflow supports the following optional inputs when called as a reusable workflow:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `max_iterations` | 50 | Maximum iterations for the agent |
+| `target_branch` | main | Target branch to create PR against |
+| `pr_type` | draft | PR type (draft, ready) |
+| `LLM_MODEL` | anthropic/claude-sonnet-4-20250514 | LLM model to use |
+| `base_container_image` | "" | Custom sandbox environment |
+| `runner` | ubuntu-latest | GitHub Actions runner |
+
 ## Manual Installation
 
 If you prefer to run the resolver programmatically instead of using GitHub Actions, follow these steps:

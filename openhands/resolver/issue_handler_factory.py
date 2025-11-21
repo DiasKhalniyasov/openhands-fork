@@ -1,11 +1,6 @@
 from openhands.core.config import LLMConfig
 from openhands.integrations.provider import ProviderType
-from openhands.resolver.interfaces.bitbucket import (
-    BitbucketIssueHandler,
-    BitbucketPRHandler,
-)
 from openhands.resolver.interfaces.github import GithubIssueHandler, GithubPRHandler
-from openhands.resolver.interfaces.gitlab import GitlabIssueHandler, GitlabPRHandler
 from openhands.resolver.interfaces.issue_definitions import (
     ServiceContextIssue,
     ServiceContextPR,
@@ -46,56 +41,12 @@ class IssueHandlerFactory:
                     ),
                     self.llm_config,
                 )
-            elif self.platform == ProviderType.GITLAB:
-                return ServiceContextIssue(
-                    GitlabIssueHandler(
-                        self.owner,
-                        self.repo,
-                        self.token,
-                        self.username,
-                        self.base_domain,
-                    ),
-                    self.llm_config,
-                )
-            elif self.platform == ProviderType.BITBUCKET:
-                return ServiceContextIssue(
-                    BitbucketIssueHandler(
-                        self.owner,
-                        self.repo,
-                        self.token,
-                        self.username,
-                        self.base_domain,
-                    ),
-                    self.llm_config,
-                )
             else:
                 raise ValueError(f'Unsupported platform: {self.platform}')
         elif self.issue_type == 'pr':
             if self.platform == ProviderType.GITHUB:
                 return ServiceContextPR(
                     GithubPRHandler(
-                        self.owner,
-                        self.repo,
-                        self.token,
-                        self.username,
-                        self.base_domain,
-                    ),
-                    self.llm_config,
-                )
-            elif self.platform == ProviderType.GITLAB:
-                return ServiceContextPR(
-                    GitlabPRHandler(
-                        self.owner,
-                        self.repo,
-                        self.token,
-                        self.username,
-                        self.base_domain,
-                    ),
-                    self.llm_config,
-                )
-            elif self.platform == ProviderType.BITBUCKET:
-                return ServiceContextPR(
-                    BitbucketPRHandler(
                         self.owner,
                         self.repo,
                         self.token,
