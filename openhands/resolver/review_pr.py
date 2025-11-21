@@ -3,9 +3,9 @@ import asyncio
 import os
 from argparse import Namespace
 
-from openhands.resolver.issue_resolver import IssueResolver
-from openhands.resolver.resolver_output import ResolverOutput
 from openhands.core.logger import openhands_logger as logger
+from openhands.resolver.interfaces.issue import Issue
+from openhands.resolver.issue_resolver import IssueResolver
 
 
 class PRReviewer(IssueResolver):
@@ -32,76 +32,80 @@ class PRReviewer(IssueResolver):
         """Execute the PR review process.
 
         This method orchestrates the full PR review workflow:
-        1. Runs the resolver to process the PR
-        2. Generates a summary of the results
-        3. Posts a comment with the review summary
+        1. Extracts the PR information
+        2. Analyzes the PR content and changes
+        3. Generates a review summary
+        4. Posts a comment with the review
         """
         logger.info(f'Starting PR review for #{self.issue_number}')
 
-        # Run the resolver to process the PR
-        output = await self.resolve_issue()
+        # Extract PR information
+        issue = self.extract_issue()
 
-        if not output:
-            logger.info('No output from resolve_issue (maybe already processed).')
-            return
+        # Analyze the PR and generate review
+        review_summary = await self._analyze_pr(issue)
 
-        # Generate and post the review summary
-        summary = self._generate_review_summary(output)
-        self._post_review_comment(summary)
+        # Post the review comment
+        self._post_review_comment(review_summary)
 
         logger.info(f'Completed PR review for #{self.issue_number}')
 
-    def _generate_review_summary(self, output: ResolverOutput) -> str:
-        """Generate a formatted summary of the PR review results.
+    async def _analyze_pr(self, issue: Issue) -> str:
+        """Analyze the PR and generate a review.
 
         Args:
-            output: The ResolverOutput containing the results of the PR processing
+            issue: The Issue object containing PR information
 
         Returns:
-            A formatted markdown string containing the review summary
+            A formatted review summary
         """
-        summary_parts = ['## OpenHands Agent Review\n\n']
+        logger.info(f'Analyzing PR #{issue.number}: {issue.title}')
 
-        # Add success/failure status
-        if output.success:
-            summary_parts.append(
-                '✅ **Success**: The agent has successfully processed the PR.\n\n'
-            )
-        else:
-            summary_parts.append('❌ **Failure**: The agent encountered issues.\n\n')
+        # Build analysis of the PR
+        analysis_parts = []
 
-        # Add explanation if available
-        if output.result_explanation:
-            summary_parts.append(f'**Explanation:**\n{output.result_explanation}\n\n')
+        # Add basic PR information
+        analysis_parts.append(f'## PR Review: {issue.title}\n\n')
 
-        # Add error information if available
-        if output.error:
-            summary_parts.append(f'**Error:**\n{output.error}\n\n')
+        # Analyze PR description
+        if issue.body:
+            analysis_parts.append('### PR Description\n')
+            analysis_parts.append(f'{issue.body[:500]}...\n\n' if len(issue.body) > 500 else f'{issue.body}\n\n')
 
-        # Add git patch preview if available
-        if output.git_patch:
-            patch_preview = self._format_git_patch_preview(output.git_patch)
-            summary_parts.append(patch_preview)
+        # Analyze review comments if present
+        if issue.review_comments:
+            analysis_parts.append(f'### Review Comments ({len(issue.review_comments)} found)\n')
+            for idx, comment in enumerate(issue.review_comments[:5], 1):
+                analysis_parts.append(f'{idx}. {comment[:200]}...\n' if len(comment) > 200 else f'{idx}. {comment}\n')
+            if len(issue.review_comments) > 5:
+                analysis_parts.append(f'\n... and {len(issue.review_comments) - 5} more comments\n')
+            analysis_parts.append('\n')
 
-        return ''.join(summary_parts)
+        # Analyze review threads if present
+        if issue.review_threads:
+            analysis_parts.append(f'### Review Threads ({len(issue.review_threads)} found)\n')
+            for idx, thread in enumerate(issue.review_threads[:3], 1):
+                analysis_parts.append(f'{idx}. **Files**: {", ".join(thread.files)}\n')
+                analysis_parts.append(f'   **Comment**: {thread.comment[:200]}...\n\n' if len(thread.comment) > 200 else f'   **Comment**: {thread.comment}\n\n')
+            if len(issue.review_threads) > 3:
+                analysis_parts.append(f'... and {len(issue.review_threads) - 3} more threads\n')
+            analysis_parts.append('\n')
 
-    def _format_git_patch_preview(
-        self, git_patch: str, max_length: int = 1000
-    ) -> str:
-        """Format a preview of the git patch for display in the comment.
+        # Add branches info
+        if issue.head_branch and issue.base_branch:
+            analysis_parts.append(f'### Branch Information\n')
+            analysis_parts.append(f'- **Base**: `{issue.base_branch}`\n')
+            analysis_parts.append(f'- **Head**: `{issue.head_branch}`\n\n')
 
-        Args:
-            git_patch: The full git patch string
-            max_length: Maximum length of the patch preview (default: 1000)
+        # Add closing issues if present
+        if issue.closing_issues:
+            analysis_parts.append(f'### Related Issues\n')
+            analysis_parts.append(f'This PR closes: {", ".join(issue.closing_issues)}\n\n')
 
-        Returns:
-            A formatted markdown code block with the patch preview
-        """
-        if len(git_patch) > max_length:
-            preview = git_patch[:max_length]
-            return f'**Git Patch Generated:**\n```diff\n{preview}...\n```\n(Truncated)'
-        else:
-            return f'**Git Patch Generated:**\n```diff\n{git_patch}\n```'
+        analysis_parts.append('---\n')
+        analysis_parts.append('*Review generated by OpenHands PR Reviewer*\n')
+
+        return ''.join(analysis_parts)
 
     def _post_review_comment(self, summary: str) -> None:
         """Post the review summary as a comment on the PR.

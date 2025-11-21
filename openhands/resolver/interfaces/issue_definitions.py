@@ -266,6 +266,15 @@ class ServiceContextPR(ServiceContext):
 
         return self._check_feedback_with_llm(prompt)
 
+    def send_comment_msg(self, issue_number: int, msg: str) -> None:
+        """Send a comment message to the PR.
+
+        Args:
+            issue_number: The PR number to comment on
+            msg: The message to post
+        """
+        return self._strategy.send_comment_msg(issue_number, msg)
+
 
 class ServiceContextIssue(ServiceContext):
     issue_type: ClassVar[str] = 'issue'
