@@ -535,7 +535,7 @@ class IssueResolver:
     async def resolve_issue(
         self,
         reset_logger: bool = False,
-    ) -> None:
+    ) -> ResolverOutput | None:
         """Resolve a single issue.
 
         Args:
@@ -612,7 +612,7 @@ class IssueResolver:
                         logger.warning(
                             f'Issue {self.issue_number} was already processed. Skipping.'
                         )
-                        return
+                        return None
 
         output_fp = open(output_file, 'a')
 
@@ -659,6 +659,7 @@ class IssueResolver:
             )
             output_fp.write(output.model_dump_json() + '\n')
             output_fp.flush()
+            return output
 
         finally:
             output_fp.close()
