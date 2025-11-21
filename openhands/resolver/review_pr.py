@@ -66,44 +66,81 @@ class PRReviewer(IssueResolver):
 
         # Add basic PR information
         analysis_parts.append(f'## PR Review: {issue.title}\n\n')
+        analysis_parts.append(f'**PR #{issue.number}** in `{issue.owner}/{issue.repo}`\n\n')
 
-        # Analyze PR description
-        if issue.body:
-            analysis_parts.append('### PR Description\n')
-            analysis_parts.append(f'{issue.body[:500]}...\n\n' if len(issue.body) > 500 else f'{issue.body}\n\n')
+        # Analyze PR description (always show, even if empty)
+        analysis_parts.append('### Description\n')
+        if issue.body and issue.body.strip():
+            body_text = issue.body.strip()
+            if len(body_text) > 1000:
+                analysis_parts.append(f'{body_text[:1000]}...\n\n*[Truncated - full description available in PR]*\n\n')
+            else:
+                analysis_parts.append(f'{body_text}\n\n')
+        else:
+            analysis_parts.append('*No description provided*\n\n')
 
-        # Analyze review comments if present
-        if issue.review_comments:
-            analysis_parts.append(f'### Review Comments ({len(issue.review_comments)} found)\n')
-            for idx, comment in enumerate(issue.review_comments[:5], 1):
-                analysis_parts.append(f'{idx}. {comment[:200]}...\n' if len(comment) > 200 else f'{idx}. {comment}\n')
-            if len(issue.review_comments) > 5:
-                analysis_parts.append(f'\n... and {len(issue.review_comments) - 5} more comments\n')
-            analysis_parts.append('\n')
-
-        # Analyze review threads if present
-        if issue.review_threads:
-            analysis_parts.append(f'### Review Threads ({len(issue.review_threads)} found)\n')
-            for idx, thread in enumerate(issue.review_threads[:3], 1):
-                analysis_parts.append(f'{idx}. **Files**: {", ".join(thread.files)}\n')
-                analysis_parts.append(f'   **Comment**: {thread.comment[:200]}...\n\n' if len(thread.comment) > 200 else f'   **Comment**: {thread.comment}\n\n')
-            if len(issue.review_threads) > 3:
-                analysis_parts.append(f'... and {len(issue.review_threads) - 3} more threads\n')
-            analysis_parts.append('\n')
-
-        # Add branches info
+        # Add branches info (always show if available)
         if issue.head_branch and issue.base_branch:
-            analysis_parts.append(f'### Branch Information\n')
-            analysis_parts.append(f'- **Base**: `{issue.base_branch}`\n')
-            analysis_parts.append(f'- **Head**: `{issue.head_branch}`\n\n')
+            analysis_parts.append('### Branch Information\n')
+            analysis_parts.append(f'- **Base branch**: `{issue.base_branch}`\n')
+            analysis_parts.append(f'- **Head branch**: `{issue.head_branch}`\n\n')
 
         # Add closing issues if present
-        if issue.closing_issues:
-            analysis_parts.append(f'### Related Issues\n')
-            analysis_parts.append(f'This PR closes: {", ".join(issue.closing_issues)}\n\n')
+        if issue.closing_issues and len(issue.closing_issues) > 0:
+            analysis_parts.append('### Related Issues\n')
+            analysis_parts.append(f'This PR references/closes: {", ".join(issue.closing_issues)}\n\n')
+
+        # Analyze review threads if present
+        if issue.review_threads and len(issue.review_threads) > 0:
+            analysis_parts.append(f'### Review Threads ({len(issue.review_threads)} found)\n')
+            for idx, thread in enumerate(issue.review_threads[:5], 1):
+                analysis_parts.append(f'{idx}. **Files**: {", ".join(thread.files)}\n')
+                comment_text = thread.comment.strip()
+                if len(comment_text) > 300:
+                    analysis_parts.append(f'   **Comment**: {comment_text[:300]}...\n\n')
+                else:
+                    analysis_parts.append(f'   **Comment**: {comment_text}\n\n')
+            if len(issue.review_threads) > 5:
+                analysis_parts.append(f'*... and {len(issue.review_threads) - 5} more threads*\n\n')
+
+        # Analyze review comments if present (but not in threads)
+        if issue.review_comments and len(issue.review_comments) > 0:
+            analysis_parts.append(f'### Review Comments ({len(issue.review_comments)} found)\n')
+            for idx, comment in enumerate(issue.review_comments[:5], 1):
+                comment_text = comment.strip()
+                if len(comment_text) > 300:
+                    analysis_parts.append(f'{idx}. {comment_text[:300]}...\n\n')
+                else:
+                    analysis_parts.append(f'{idx}. {comment_text}\n\n')
+            if len(issue.review_comments) > 5:
+                analysis_parts.append(f'*... and {len(issue.review_comments) - 5} more comments*\n\n')
+
+        # Analyze thread comments if present
+        if issue.thread_comments and len(issue.thread_comments) > 0:
+            analysis_parts.append(f'### Discussion Thread ({len(issue.thread_comments)} comments)\n')
+            for idx, comment in enumerate(issue.thread_comments[:3], 1):
+                comment_text = comment.strip()
+                if len(comment_text) > 300:
+                    analysis_parts.append(f'{idx}. {comment_text[:300]}...\n\n')
+                else:
+                    analysis_parts.append(f'{idx}. {comment_text}\n\n')
+            if len(issue.thread_comments) > 3:
+                analysis_parts.append(f'*... and {len(issue.thread_comments) - 3} more comments*\n\n')
+
+        # Add review status summary
+        analysis_parts.append('### Review Status\n')
+        total_feedback = sum([
+            len(issue.review_threads or []),
+            len(issue.review_comments or []),
+            len(issue.thread_comments or [])
+        ])
+        if total_feedback > 0:
+            analysis_parts.append(f'📝 This PR has **{total_feedback}** review feedback item(s) to address.\n\n')
+        else:
+            analysis_parts.append('✅ No review feedback found. This PR appears ready for review.\n\n')
 
         analysis_parts.append('---\n')
-        analysis_parts.append('*Review generated by OpenHands PR Reviewer*\n')
+        analysis_parts.append('*🤖 Review generated by [ForteBank AI PR Reviewer]*\n')
 
         return ''.join(analysis_parts)
 
