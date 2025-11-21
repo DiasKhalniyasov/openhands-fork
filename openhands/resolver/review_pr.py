@@ -64,10 +64,12 @@ class PRReviewer(IssueResolver):
         logger.info(f'Fetching diff for PR #{self.issue_number}')
 
         # Get the PR diff using GitHub API
-        url = f'{self.issue_handler._strategy.get_base_url()}/repos/{self.owner}/{self.repo}/pulls/{self.issue_number}'
+        # get_base_url() already returns: https://api.github.com/repos/{owner}/{repo}
+        url = f'{self.issue_handler._strategy.get_base_url()}/pulls/{self.issue_number}'
         headers = self.issue_handler._strategy.get_headers()
         headers['Accept'] = 'application/vnd.github.v3.diff'
 
+        logger.info(f'Fetching PR diff from: {url}')
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
 
