@@ -5,9 +5,9 @@ import os
 import subprocess
 from typing import Any
 
+import litellm
 from openhands.core.config import load_openhands_config
 from openhands.core.logger import openhands_logger as logger
-from openhands.llm.llm_registry import LLMRegistry
 from openhands.resolver.issue_handler_factory import IssueHandlerFactory
 from openhands.resolver.interfaces.issue import Issue
 from openhands.resolver.utils import identify_token
@@ -34,8 +34,6 @@ class PRReviewer:
         if args.llm_base_url:
             llm_config.base_url = args.llm_base_url
         self.config.set_llm_config(llm_config)
-
-        self.llm_registry = LLMRegistry(self.config)
 
         factory = IssueHandlerFactory(
             owner=self.owner,
@@ -103,19 +101,6 @@ class PRReviewer:
         from jinja2 import Template
         template = Template(prompt_template)
         prompt = template.render(issue=issue, diff=diff[:50000]) # Truncate diff if too large
-
-        # Call LLM
-        llm = self.llm_registry.get_llm(self.config.get_llm_config().model)
-
-        # We need to use the completion API
-        # The LLM interface in OpenHands might vary, let's check how IssueResolver uses it.
-        # IssueResolver uses `run_controller` which uses `CodeActAgent`.
-        # Here we just want a simple completion.
-
-        # Using litellm directly or via the config?
-        # The LLMConfig has the details.
-
-        import litellm
 
         messages = [{"role": "user", "content": prompt}]
 
