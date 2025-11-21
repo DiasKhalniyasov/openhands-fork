@@ -96,7 +96,7 @@ class PRReviewer(IssueResolver):
         llm_config = self.app_config.get_llm_config()
         from openhands.llm.llm import LLM
 
-        llm = LLM(llm_config)
+        llm = LLM(llm_config, service_id='pr-reviewer')
 
         try:
             response = llm.completion(
