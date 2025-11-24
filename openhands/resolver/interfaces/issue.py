@@ -123,3 +123,48 @@ class IssueHandlerInterface(ABC):
     ) -> list[Issue]:
         """Download issues from the git provider (GitHub, GitLab, or Bitbucket)."""
         pass
+
+    @abstractmethod
+    def add_mr_labels(self, mr_number: int, labels: list[str]) -> None:
+        """Add labels/tags to a merge request or pull request.
+
+        Args:
+            mr_number: The MR/PR number
+            labels: List of label names to add
+        """
+        pass
+
+    @abstractmethod
+    def remove_mr_labels(self, mr_number: int, labels: list[str]) -> None:
+        """Remove labels/tags from a merge request or pull request.
+
+        Args:
+            mr_number: The MR/PR number
+            labels: List of label names to remove
+        """
+        pass
+
+    @abstractmethod
+    def set_mr_status(
+        self, mr_number: int, status: str, description: str | None = None
+    ) -> None:
+        """Set the status of a merge request (approve, request changes, etc.).
+
+        Args:
+            mr_number: The MR/PR number
+            status: The status to set ('approve', 'unapprove', 'request_changes')
+            description: Optional description for the status
+        """
+        pass
+
+    @abstractmethod
+    def get_mr_reviewers(self, mr_number: int) -> list[str]:
+        """Get usernames of assigned reviewers for a merge request.
+
+        Args:
+            mr_number: The MR/PR number
+
+        Returns:
+            List of reviewer usernames
+        """
+        pass

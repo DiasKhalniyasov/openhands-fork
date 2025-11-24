@@ -310,6 +310,138 @@ class GitlabIssueHandler(IssueHandlerInterface):
     ) -> list[str]:
         return []
 
+    def add_mr_labels(self, mr_number: int, labels: list[str]) -> None:
+        """Add labels to a merge request.
+
+        Args:
+            mr_number: The MR number
+            labels: List of label names to add
+        """
+        if not labels:
+            return
+
+        logger.info(f'Adding labels {labels} to MR #{mr_number}')
+
+        # First get current labels
+        url = f'{self.base_url}/merge_requests/{mr_number}'
+        response = httpx.get(url, headers=self.headers)
+        response.raise_for_status()
+        mr_data = response.json()
+        current_labels = mr_data.get('labels', [])
+
+        # Merge with new labels (avoid duplicates)
+        all_labels = list(set(current_labels + labels))
+
+        # Update the MR with new labels
+        update_data = {'labels': ','.join(all_labels)}
+        response = httpx.put(url, headers=self.headers, json=update_data)
+        if response.status_code != 200:
+            logger.error(f'Failed to add labels: {response.status_code} {response.text}')
+        else:
+            logger.info(f'Successfully added labels {labels} to MR #{mr_number}')
+
+    def remove_mr_labels(self, mr_number: int, labels: list[str]) -> None:
+        """Remove labels from a merge request.
+
+        Args:
+            mr_number: The MR number
+            labels: List of label names to remove
+        """
+        if not labels:
+            return
+
+        logger.info(f'Removing labels {labels} from MR #{mr_number}')
+
+        # First get current labels
+        url = f'{self.base_url}/merge_requests/{mr_number}'
+        response = httpx.get(url, headers=self.headers)
+        response.raise_for_status()
+        mr_data = response.json()
+        current_labels = mr_data.get('labels', [])
+
+        # Remove specified labels
+        remaining_labels = [label for label in current_labels if label not in labels]
+
+        # Update the MR with remaining labels
+        update_data = {'labels': ','.join(remaining_labels)}
+        response = httpx.put(url, headers=self.headers, json=update_data)
+        if response.status_code != 200:
+            logger.error(
+                f'Failed to remove labels: {response.status_code} {response.text}'
+            )
+        else:
+            logger.info(f'Successfully removed labels {labels} from MR #{mr_number}')
+
+    def set_mr_status(
+        self, mr_number: int, status: str, description: str | None = None
+    ) -> None:
+        """Set the approval status of a merge request.
+
+        Args:
+            mr_number: The MR number
+            status: The status to set ('approve', 'unapprove', 'request_changes')
+            description: Optional description (used as comment for request_changes)
+        """
+        logger.info(f'Setting MR #{mr_number} status to: {status}')
+
+        if status == 'approve':
+            # Approve the MR
+            url = f'{self.base_url}/merge_requests/{mr_number}/approve'
+            response = httpx.post(url, headers=self.headers)
+            if response.status_code not in [200, 201]:
+                logger.error(
+                    f'Failed to approve MR: {response.status_code} {response.text}'
+                )
+            else:
+                logger.info(f'Successfully approved MR #{mr_number}')
+
+        elif status == 'unapprove':
+            # Unapprove/revoke approval for the MR
+            url = f'{self.base_url}/merge_requests/{mr_number}/unapprove'
+            response = httpx.post(url, headers=self.headers)
+            if response.status_code not in [200, 201]:
+                logger.error(
+                    f'Failed to unapprove MR: {response.status_code} {response.text}'
+                )
+            else:
+                logger.info(f'Successfully unapproved MR #{mr_number}')
+
+        elif status == 'request_changes':
+            # GitLab doesn't have a direct "request changes" status like GitHub
+            # We unapprove and optionally add a comment
+            url = f'{self.base_url}/merge_requests/{mr_number}/unapprove'
+            response = httpx.post(url, headers=self.headers)
+            if response.status_code not in [200, 201, 404]:
+                # 404 is ok - means it wasn't approved in the first place
+                logger.warning(
+                    f'Failed to unapprove MR: {response.status_code} {response.text}'
+                )
+
+            # Add a comment if description is provided
+            if description:
+                self.send_comment_msg(mr_number, f'🔄 **Changes Requested**\n\n{description}')
+
+            logger.info(f'Successfully requested changes for MR #{mr_number}')
+
+        else:
+            logger.warning(f'Unknown status: {status}. Supported: approve, unapprove, request_changes')
+
+    def get_mr_reviewers(self, mr_number: int) -> list[str]:
+        """Get usernames of assigned reviewers for a merge request.
+
+        Args:
+            mr_number: The MR number
+
+        Returns:
+            List of reviewer usernames
+        """
+        url = f'{self.base_url}/merge_requests/{mr_number}'
+        response = httpx.get(url, headers=self.headers)
+        response.raise_for_status()
+        mr_data = response.json()
+        reviewers = mr_data.get('reviewers', [])
+        return [r.get('username') for r in reviewers if r.get('username')]
+
 
 class GitlabPRHandler(GitlabIssueHandler):
     def __init__(

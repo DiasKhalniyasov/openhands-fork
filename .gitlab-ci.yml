@@ -1,0 +1,123 @@
+stages:
+  - security
+  - review
+
+variables:
+  LLM_MODEL: "anthropic/claude-sonnet-4-20250514"
+
+# ============================================
+# FULL REVIEW WORKFLOW: Security -> Code Review
+# Triggered by [ForteBank-AI-Full-Review] in MR title
+# ============================================
+
+full-review-security:
+  stage: security
+  image: python:3.12
+
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "merge_request_event" &&
+        $CI_MERGE_REQUEST_TITLE =~ /\[ForteBank-AI-Full-Review\]/ &&
+        $CI_MERGE_REQUEST_AUTHOR != "fortebank-ai-review-agent"
+      when: always
+    - when: never
+
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install git+https://github.com/DiasKhalniyasov/openhands-fork.git
+
+  script:
+    - cd /tmp && python -m openhands.resolver.security_pr \
+        --selected-repo "$CI_PROJECT_PATH" \
+        --issue-number "$CI_MERGE_REQUEST_IID" \
+        --token "$GITLAB_TOKEN" \
+        --username "${GITLAB_USERNAME:-fortebank-ai-review-agent}" \
+        --llm-model "${LLM_MODEL_SECRET:-$LLM_MODEL}" \
+        --llm-api-key "$LLM_API_KEY" \
+        ${LLM_BASE_URL:+--llm-base-url "$LLM_BASE_URL"}
+
+full-review-code:
+  stage: review
+  image: python:3.12
+
+  needs:
+    - job: full-review-security
+
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "merge_request_event" &&
+        $CI_MERGE_REQUEST_TITLE =~ /\[ForteBank-AI-Full-Review\]/ &&
+        $CI_MERGE_REQUEST_AUTHOR != "fortebank-ai-review-agent"
+      when: on_success
+    - when: never
+
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install git+https://github.com/DiasKhalniyasov/openhands-fork.git
+
+  script:
+    - cd /tmp && python -m openhands.resolver.review_pr \
+        --selected-repo "$CI_PROJECT_PATH" \
+        --issue-number "$CI_MERGE_REQUEST_IID" \
+        --token "$GITLAB_TOKEN" \
+        --username "${GITLAB_USERNAME:-fortebank-ai-review-agent}" \
+        --llm-model "${LLM_MODEL_SECRET:-$LLM_MODEL}" \
+        --llm-api-key "$LLM_API_KEY" \
+        ${LLM_BASE_URL:+--llm-base-url "$LLM_BASE_URL"}
+
+# ============================================
+# STANDALONE JOBS
+# For individual review types
+# ============================================
+
+auto-review:
+  stage: review
+  image: python:3.12
+
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "merge_request_event" &&
+        $CI_MERGE_REQUEST_TITLE =~ /\[ForteBank-AI-Review\]/ &&
+        $CI_MERGE_REQUEST_AUTHOR != "fortebank-ai-review-agent"
+      when: always
+    - when: never
+
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install git+https://github.com/DiasKhalniyasov/openhands-fork.git
+
+  script:
+    - cd /tmp && python -m openhands.resolver.review_pr \
+        --selected-repo "$CI_PROJECT_PATH" \
+        --issue-number "$CI_MERGE_REQUEST_IID" \
+        --token "$GITLAB_TOKEN" \
+        --username "${GITLAB_USERNAME:-fortebank-ai-review-agent}" \
+        --llm-model "${LLM_MODEL_SECRET:-$LLM_MODEL}" \
+        --llm-api-key "$LLM_API_KEY" \
+        ${LLM_BASE_URL:+--llm-base-url "$LLM_BASE_URL"}
+
+security-review:
+  stage: security
+  image: python:3.12
+
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "merge_request_event" &&
+        $CI_MERGE_REQUEST_TITLE =~ /\[ForteBank-AI-Security\]/ &&
+        $CI_MERGE_REQUEST_AUTHOR != "fortebank-ai-review-agent"
+      when: always
+    - when: never
+
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install git+https://github.com/DiasKhalniyasov/openhands-fork.git
+
+  script:
+    - cd /tmp && python -m openhands.resolver.security_pr \
+        --selected-repo "$CI_PROJECT_PATH" \
+        --issue-number "$CI_MERGE_REQUEST_IID" \
+        --token "$GITLAB_TOKEN" \
+        --username "${GITLAB_USERNAME:-fortebank-ai-review-agent}" \
+        --llm-model "${LLM_MODEL_SECRET:-$LLM_MODEL}" \
+        --llm-api-key "$LLM_API_KEY" \
+        ${LLM_BASE_URL:+--llm-base-url "$LLM_BASE_URL"}

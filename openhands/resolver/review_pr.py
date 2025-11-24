@@ -1,11 +1,35 @@
 import argparse
 import asyncio
 import os
+import re
 from argparse import Namespace
+from enum import Enum
 
 from openhands.core.logger import openhands_logger as logger
 from openhands.resolver.interfaces.issue import Issue
 from openhands.resolver.issue_resolver import IssueResolver
+
+
+class ReviewOutcome(Enum):
+    """Possible outcomes of a PR review."""
+    APPROVED = 'approved'
+    CHANGES_REQUESTED = 'changes_requested'
+    NEEDS_DISCUSSION = 'needs_discussion'
+
+
+# Default label configurations
+DEFAULT_LABELS = {
+    ReviewOutcome.APPROVED: ['ai-reviewed', 'ready-for-senior-review'],
+    ReviewOutcome.CHANGES_REQUESTED: ['ai-reviewed', 'changes-requested'],
+    ReviewOutcome.NEEDS_DISCUSSION: ['ai-reviewed', 'needs-discussion'],
+}
+
+# Labels to remove when setting a new status (mutually exclusive labels)
+MUTUALLY_EXCLUSIVE_LABELS = [
+    'ready-for-senior-review',
+    'changes-requested',
+    'needs-discussion',
+]
 
 
 class PRReviewer(IssueResolver):
@@ -35,7 +59,9 @@ class PRReviewer(IssueResolver):
         1. Extracts the PR information
         2. Fetches the PR diff/changes
         3. Uses LLM to review the code
-        4. Posts a comment with the review
+        4. Determines the review outcome
+        5. Posts a comment with the review
+        6. Sets appropriate labels and MR status
         """
         logger.info(f'Starting PR review for #{self.issue_number}')
 
@@ -46,10 +72,20 @@ class PRReviewer(IssueResolver):
         pr_diff = self._fetch_pr_diff()
 
         # Generate review using LLM
-        review_summary = await self._generate_code_review(issue, pr_diff)
+        review_summary, review_content = await self._generate_code_review(issue, pr_diff)
+
+        # Determine review outcome from LLM response
+        outcome = self._determine_review_outcome(review_content)
+        logger.info(f'Review outcome for PR #{self.issue_number}: {outcome.value}')
 
         # Post the review comment
         self._post_review_comment(review_summary)
+
+        # Set labels and MR status based on outcome
+        self._apply_review_outcome(outcome)
+
+        # Notify reviewers if this is an escalation outcome
+        self._notify_reviewers_on_escalation(outcome)
 
         logger.info(f'Completed PR review for #{self.issue_number}')
 
@@ -77,7 +113,7 @@ class PRReviewer(IssueResolver):
         logger.info(f'Fetched diff: {len(diff)} characters')
         return diff
 
-    async def _generate_code_review(self, issue: Issue, pr_diff: str) -> str:
+    async def _generate_code_review(self, issue: Issue, pr_diff: str) -> tuple[str, str]:
         """Generate a code review using LLM.
 
         Args:
@@ -85,7 +121,7 @@ class PRReviewer(IssueResolver):
             pr_diff: The PR diff string
 
         Returns:
-            A formatted review with LLM-generated feedback
+            A tuple of (formatted review output, raw LLM review content)
         """
         logger.info(f'Generating code review for PR #{issue.number}')
 
@@ -103,7 +139,12 @@ class PRReviewer(IssueResolver):
                 messages=[
                     {
                         'role': 'system',
-                        'content': 'You are an expert code reviewer. Provide constructive, specific feedback on code changes.',
+                        'content': '''You are an expert code reviewer. Provide constructive, specific feedback on code changes.
+
+At the end of your review, you MUST include a clear verdict in the following format:
+**VERDICT: APPROVED** - if the code is good and ready for merge
+**VERDICT: CHANGES_REQUESTED** - if there are issues that must be fixed before merging
+**VERDICT: NEEDS_DISCUSSION** - if there are design decisions or questions that need team discussion''',
                     },
                     {'role': 'user', 'content': prompt},
                 ]
@@ -112,10 +153,11 @@ class PRReviewer(IssueResolver):
             review_content = response.choices[0].message.content
         except Exception as e:
             logger.error(f'Failed to generate LLM review: {e}')
-            review_content = '*Unable to generate automated review. Please review manually.*'
+            review_content = '*Unable to generate automated review. Please review manually.*\n\n**VERDICT: NEEDS_DISCUSSION**'
 
         # Format the final review
-        return self._format_review_output(issue, review_content, pr_diff)
+        formatted_output = self._format_review_output(issue, review_content, pr_diff)
+        return formatted_output, review_content
 
     def _build_review_prompt(self, issue: Issue, pr_diff: str) -> str:
         """Build the prompt for LLM code review.
@@ -156,6 +198,11 @@ Please provide a thorough code review covering:
 6. **Testing**: Are there adequate tests? What test cases might be missing?
 
 Format your response as a structured review with clear sections and actionable feedback.
+
+At the end of your review, you MUST include a verdict line in exactly this format:
+**VERDICT: APPROVED** - if the code looks good with no blocking issues
+**VERDICT: CHANGES_REQUESTED** - if there are issues that must be addressed before merging
+**VERDICT: NEEDS_DISCUSSION** - if there are architectural or design questions that need team input
 """
         return prompt
 
@@ -319,6 +366,126 @@ Format your response as a structured review with clear sections and actionable f
         logger.info(f'Posting review comment for PR #{self.issue_number}')
         self.issue_handler.send_comment_msg(self.issue_number, summary)
         logger.info('Review comment posted successfully')
+
+    def _determine_review_outcome(self, review_content: str) -> ReviewOutcome:
+        """Determine the review outcome from the LLM response.
+
+        Args:
+            review_content: The raw LLM review content
+
+        Returns:
+            The determined ReviewOutcome
+        """
+        # Look for explicit verdict in the response
+        verdict_pattern = r'\*\*VERDICT:\s*(APPROVED|CHANGES_REQUESTED|NEEDS_DISCUSSION)\*\*'
+        match = re.search(verdict_pattern, review_content, re.IGNORECASE)
+
+        if match:
+            verdict = match.group(1).upper()
+            if verdict == 'APPROVED':
+                return ReviewOutcome.APPROVED
+            elif verdict == 'CHANGES_REQUESTED':
+                return ReviewOutcome.CHANGES_REQUESTED
+            elif verdict == 'NEEDS_DISCUSSION':
+                return ReviewOutcome.NEEDS_DISCUSSION
+
+        # Fallback: analyze content for indicators
+        content_lower = review_content.lower()
+
+        # Check for critical issues
+        critical_indicators = [
+            'critical', 'blocker', 'must fix', 'security vulnerability',
+            'breaking change', 'will crash', 'data loss', 'injection',
+        ]
+        if any(indicator in content_lower for indicator in critical_indicators):
+            return ReviewOutcome.CHANGES_REQUESTED
+
+        # Check for discussion needs
+        discussion_indicators = [
+            'need to discuss', 'consider', 'suggestion', 'alternative approach',
+            'team decision', 'architectural', 'design question',
+        ]
+        if any(indicator in content_lower for indicator in discussion_indicators):
+            return ReviewOutcome.NEEDS_DISCUSSION
+
+        # Default to needs discussion if no clear verdict
+        return ReviewOutcome.NEEDS_DISCUSSION
+
+    def _apply_review_outcome(self, outcome: ReviewOutcome) -> None:
+        """Apply labels and MR status based on the review outcome.
+
+        Args:
+            outcome: The determined review outcome
+        """
+        logger.info(f'Applying review outcome: {outcome.value}')
+
+        # Get the strategy (handler) from issue_handler
+        strategy = self.issue_handler._strategy
+
+        # Remove mutually exclusive labels first
+        try:
+            strategy.remove_mr_labels(self.issue_number, MUTUALLY_EXCLUSIVE_LABELS)
+        except Exception as e:
+            logger.warning(f'Failed to remove existing labels: {e}')
+
+        # Add new labels based on outcome
+        labels_to_add = DEFAULT_LABELS.get(outcome, [])
+        if labels_to_add:
+            try:
+                strategy.add_mr_labels(self.issue_number, labels_to_add)
+            except Exception as e:
+                logger.error(f'Failed to add labels: {e}')
+
+        # Set MR status based on outcome
+        try:
+            if outcome == ReviewOutcome.APPROVED:
+                strategy.set_mr_status(self.issue_number, 'approve')
+            elif outcome == ReviewOutcome.CHANGES_REQUESTED:
+                strategy.set_mr_status(
+                    self.issue_number,
+                    'request_changes',
+                    'AI review found issues that need to be addressed.'
+                )
+            # For NEEDS_DISCUSSION, we don't change the approval status
+        except Exception as e:
+            logger.warning(f'Failed to set MR status: {e}')
+
+    def _notify_reviewers_on_escalation(self, outcome: ReviewOutcome) -> None:
+        """Notify assigned reviewers on escalation outcomes.
+
+        Escalation occurs when:
+        - APPROVED: MR is ready for senior review
+        - NEEDS_DISCUSSION: Items need team discussion
+
+        Args:
+            outcome: The code review outcome
+        """
+        if outcome not in [ReviewOutcome.APPROVED, ReviewOutcome.NEEDS_DISCUSSION]:
+            return
+
+        try:
+            strategy = self.issue_handler._strategy
+            reviewers = strategy.get_mr_reviewers(self.issue_number)
+            if reviewers:
+                mentions = ' '.join([f'@{u}' for u in reviewers])
+                if outcome == ReviewOutcome.APPROVED:
+                    msg = (
+                        f'**✅ Ready for Review** {mentions}\n\n'
+                        f'AI code review has completed successfully. '
+                        f'This MR is ready for senior review and approval.'
+                    )
+                else:  # NEEDS_DISCUSSION
+                    msg = (
+                        f'**💬 Discussion Required** {mentions}\n\n'
+                        f'AI review has identified items that need team discussion. '
+                        f'Please review the comments above and provide guidance.'
+                    )
+                strategy.send_comment_msg(self.issue_number, msg)
+                logger.info(f'Notified reviewers about escalation: {reviewers}')
+            else:
+                logger.info('No reviewers assigned to notify about escalation')
+        except Exception as e:
+            logger.warning(f'Failed to notify reviewers: {e}')
 
 
 def main() -> None:
